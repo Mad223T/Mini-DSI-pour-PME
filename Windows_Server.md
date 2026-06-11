@@ -95,11 +95,6 @@ Le rôle est installé, mais le serveur n'est pas encore un contrôleur de domai
 10. L'assistant procède à la vérification des composants requis. Une fois le message de validation affiché en haut, cliquez sur **Installer**.
 11. Une fois la promotion achevée, le serveur va redémarrer automatiquement pour initialiser le nouvel annuaire d'entreprise.
 
-
-# Complément de Configuration : Création de la Plage d'Adresses DHCP (Étendue)
-
-Ce module s'insère directement dans le guide du serveur Windows après l'Étape 5 (Promotion en Contrôleur de Domaine). Il détaille l'activation et la configuration de l'étendue DHCP pour distribuer automatiquement les configurations IP aux clients du LAN privé.
-
 ---
 
 ## Étape 6 : Configuration de l'Étendue du Serveur DHCP
