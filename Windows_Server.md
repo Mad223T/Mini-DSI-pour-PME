@@ -145,3 +145,156 @@ Le rôle DHCP étant installé, il est nécessaire de définir la plage réseau 
    ```cmd
    net stop dns && net start dns
    net stop dhcpserver && net start dhcpserver
+   ```
+
+---
+
+## Étape 8 : Automatisation de la Gestion des Utilisateurs et Intégration Linux
+
+**📍 Position de l'utilisateur :** Console PowerShell (en mode Administrateur) sur le Windows Server et Terminal SSH sur le Serveur de Fichiers Ubuntu.
+
+Une fois l'infrastructure Active Directory opérationnelle, la création en masse des comptes d'utilisateurs ainsi que l'interconnexion automatique avec le serveur de stockage Linux s'effectuent à l'aide d'un script d'automatisation global.
+
+1. Sur votre Windows Server, créez un fichier source nommé `C:\utilisateurs.csv` structuré avec les colonnes suivantes : `Prenom,Nom,SamAccountName,OU,Role`.
+2. Lancez l'environnement **PowerShell ISE** en mode Administrateur et enregistrez le script d'automatisation générique ci-dessous (adaptez les variables du bloc de configuration selon votre plan d'adressage) :
+
+```powershell
+Import-Module ActiveDirectory
+
+# =========================================================================
+# BLOC DE CONFIGURATION (À ADAPTER SELON VOTRE ARCHITECTURE)
+# =========================================================================
+$csvPath         = "C:\utilisateurs.csv"                        # Chemin vers votre fichier d'utilisateurs
+$domainDN        = "DC=votre-domaine,DC=local"                 # Nom unique (DN) de votre racine AD
+$defaultPassword = ConvertTo-SecureString "MotDePasseInitial" -AsPlainText -Force # Mot de passe par défaut
+$domainSuffix    = "votre-domaine.local"                       # Suffixe UPN pour l'annuaire
+
+# Paramètres d'interconnexion avec le Serveur de Fichiers Linux
+$linuxServerIP   = "IP_DE_VOTRE_SERVEUR_LINUX"                 # Exemple: 192.168.10.11
+$linuxUser       = "NOM_UTILISATEUR_LINUX"                     # Compte d'administration local sur Ubuntu
+$basePathLinux   = "/srv/samba/privateshares"                  # Racine de la zone de stockage privée Linux
+# =========================================================================
+
+# Chargement de la liste des collaborateurs depuis le fichier CSV
+$users = Import-Csv -Path $csvPath -Delimiter ","
+
+Write-Host "--- DÉBUT DU TRAITEMENT AUTOMATISÉ DE L'ANNUAIRE ET DU STOCKAGE ---`n" -ForegroundColor Yellow
+
+foreach ($user in $users) {
+    $ouName = $user.OU
+    $targetOU = "OU=$ouName,$domainDN"
+    $samAccount = $user.SamAccountName
+
+    # 1. Vérification et création dynamique de l'OU si elle est absente
+    if (-not (Get-ADOrganizationalUnit -Filter "Name -eq '$ouName'")) {
+        New-ADOrganizationalUnit -Name $ouName -Path $domainDN
+        Write-Host "OU '$ouName' créée dans l'arborescence." -ForegroundColor Green
+    }
+
+    # 2. Préparation des attributs de l'utilisateur Active Directory
+    $userParams = @{
+        GivenName             = $user.Prenom
+        Surname                = $user.Nom
+        Name                  = "$($user.Prenom) $($user.Nom)"
+        SamAccountName        = $samAccount
+        UserPrincipalName     = "$samAccount@$domainSuffix"
+        Path                  = $targetOU
+        AccountPassword       = $defaultPassword
+        ChangePasswordAtLogon = $true  # Force le changement de mot de passe obligatoire à la première connexion
+        Enabled               = $true
+    }
+
+    # 3. Création ou alignement de l'utilisateur
+    if (-not (Get-ADUser -Filter "SamAccountName -eq '$samAccount'")) {
+        try {
+            New-ADUser @userParams
+            Write-Host "Utilisateur $samAccount créé avec succès dans l'OU $ouName." -ForegroundColor Cyan
+
+            # --- SYNCHRONISATION DU REPERTOIRE PRIVÉ SUR LINUX VIA SSH ---
+            $userFolder = "$basePathLinux/$samAccount"
+            
+            # Utilisation de la syntaxe de nom court validée pour les environnements Winbind/Samba
+            $linuxCommand = "sudo mkdir -p {0} && sudo chown {1}: {0} && sudo chmod 700 {0}" -f $userFolder, $samAccount
+            
+            Write-Host "-> Configuration du dossier distant via SSH pour $samAccount..." -ForegroundColor Gray
+            ssh -o StrictHostKeyChecking=no "$linuxUser@$linuxServerIP" $linuxCommand 2>$null
+        }
+        catch {
+            Write-Host "Erreur lors de la création du compte $samAccount : $_" -ForegroundColor Red
+        }
+    } else {
+        # Si l'utilisateur est réinitialisé ou recréé, réalignement automatique du propriétaire de son dossier
+        $userFolder = "$basePathLinux/$samAccount"
+        $linuxCommand = "sudo mkdir -p {0} && sudo chown {1}: {0} && sudo chmod 700 {0}" -f $userFolder, $samAccount
+        ssh -o StrictHostKeyChecking=no "$linuxUser@$linuxServerIP" $linuxCommand 2>$null
+        Write-Host "Le compte $samAccount existe déjà. Les privilèges UID de son dossier Linux ont été mis à jour." -ForegroundColor Gray
+    }
+
+    # 4. Élévation des privilèges pour les profils d'administration technique
+    if ($user.Role -eq "Expert-SuperUser") {
+        $groupName = "Admins du domaine"
+        Start-Sleep -Milliseconds 200
+        try {
+            $isMember = Get-ADGroupMember -Identity $groupName | Where-Object { $_.SamAccountName -eq $samAccount }
+            if (-not $isMember) {
+                Add-ADGroupMember -Identity $groupName -Members $samAccount
+                Write-Host "-> Privilèges d'administration accordés à $samAccount (Groupe Admins du domaine)." -ForegroundColor Yellow
+            }
+        }
+        catch {
+            Write-Host "Impossible d'ajouter $samAccount au groupe d'administration globale : $_" -ForegroundColor Red
+        }
+    }
+}
+
+Write-Host "`n[✓] Traitement de l'annuaire Active Directory et des partages terminé !" -ForegroundColor Green -BackgroundColor Black
+```
+
+---
+
+## Étape 9 : Déploiement de la Stratégie de Groupe pour le Mappage Réseau (GPO)
+
+**📍 Position de l'utilisateur :** Console de Gestion des stratégies de groupe (GPMC) sur le Windows Server.
+
+Pour connecter de manière transparente les espaces de stockage centralisés sans l'aide de scripts de connexion `.bat` intrusifs, les partages réseau sont distribués nativement via les Préférences de Stratégie de Groupe (GPO).
+
+1. Sur votre clavier, faites la combinaison de touches `Windows + R`, saisissez `gpmc.msc` et cliquez sur **OK**.
+2. Déroulez l'arborescence jusqu'à votre domaine racine, faites un clic droit sur votre nom de domaine (ex: `votre-domaine.local`) et sélectionnez **Créer un objet GPO dans ce domaine, et le lier ici...**. Nommez cet objet `GPO-Montage-Disques`.
+3. Faites un clic droit sur la GPO `GPO-Montage-Disques` nouvellement créée et cliquez sur **Modifier**.
+4. Dans l'arborescence de gauche, naviguez vers : **Configuration utilisateur** > **Préférences** > **Paramètres Windows** > **Mappage de lecteurs**.
+
+### Configuration du Lecteur Commun (Espace Collaboratif X:)
+1. Faites un clic droit dans la zone vide du volet principal de droite, puis sélectionnez **Nouveau** > **Lecteur mappé**.
+2. Sur l'onglet **Général**, ajustez les options suivantes :
+   * **Action :** Mettre à jour
+   * **Emplacement :** `\\IP_OU_NOM_SERVEUR_LINUX\PublicShares` *(Remplacez par les paramètres de votre serveur de fichiers)*
+   * **Libellé :** `Répertoire Public`
+   * **Lettre de lecteur :** Utiliser -> `X`
+3. Allez sur l'onglet **Commun**, cochez la case **Exécuter dans le contexte de sécurité de l'utilisateur connecté (option de stratégie utilisateur)**.
+4. Cliquez sur **Appliquer**.
+
+### Configuration du Lecteur Privé (Espace Personnel G:)
+1. Dans la même zone, faites un clic droit puis sélectionnez **Nouveau** > **Lecteur mappé**.
+2. Sur l'onglet **Général**, ajustez les options suivantes :
+   * **Action :** Mettre à jour
+   * **Emplacement :** `\\IP_OU_NOM_SERVEUR_LINUX\PrivateShares$\%LogonUser%` *(Conservez scrupuleusement la variable d'environnement `%LogonUser%` pour cibler automatiquement le nom d'utilisateur Windows ouvert).*
+   * **Libellé :** `Espace Privé`
+   * **Lettre de lecteur :** Utiliser -> `G`
+3. Allez sur l'onglet **Commun**, cochez obligatoirement la case **Exécuter dans le contexte de sécurité de l'utilisateur connecté (option de stratégie utilisateur)**.
+4. Cliquez sur **Appliquer** puis sur **OK**.
+
+---
+
+## Étape 10 : Validation et Recette Environnement Client
+
+**📍 Position de l'utilisateur :** Poste de travail d'une machine cliente Windows connectée au segment LAN.
+
+1. Connectez-vous sur un poste client du domaine à l'aide d'un compte créé par le script d'automatisation.
+2. Le système intercepte la session et vous invite à modifier immédiatement le mot de passe utilisateur d'origine conformément à la directive `ChangePasswordAtLogon`.
+3. Saisissez votre mot de passe d'entreprise définitif.
+4. Une fois sur le bureau Windows, ouvrez une invite de commandes (`cmd`) en mode utilisateur et exécutez la commande suivante pour forcer l'application des stratégies réseau :
+   ```cmd
+   gpupdate /force
+   ```
+5. Fermez la session Windows, puis rouvrez-la afin d'exécuter la phase d'initialisation des partages.
+6. Ouvrez l'Explorateur de fichiers et liquez sur `Ce PC:`Vos lecteurs réseau `Espace Privé (G:)` et `Répertoire Public (X:)` apparaissent automatiquement, fonctionnels et cloisonnés selon l'utilisateur connecté.
