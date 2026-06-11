@@ -95,9 +95,53 @@ Le rôle est installé, mais le serveur n'est pas encore un contrôleur de domai
 10. L'assistant procède à la vérification des composants requis. Une fois le message de validation affiché en haut, cliquez sur **Installer**.
 11. Une fois la promotion achevée, le serveur va redémarrer automatiquement pour initialiser le nouvel annuaire d'entreprise.
 
+
+# Complément de Configuration : Création de la Plage d'Adresses DHCP (Étendue)
+
+Ce module s'insère directement dans le guide du serveur Windows après l'Étape 5 (Promotion en Contrôleur de Domaine). Il détaille l'activation et la configuration de l'étendue DHCP pour distribuer automatiquement les configurations IP aux clients du LAN privé.
+
 ---
 
-## Étape 6 : Vérification et Maintenance Post-Installation
+## Étape 6 : Configuration de l'Étendue du Serveur DHCP
+**📍 Position de l'utilisateur :** Bureau de Windows Server — Connecté en tant qu'Administrateur du domaine.
+
+Le rôle DHCP étant installé, il est nécessaire de définir la plage réseau (l'étendue) que le serveur va distribuer de manière dynamique sur votre segment privé.
+
+1. **Ouverture de la console DHCP :**
+   - Dans le **Gestionnaire de serveur**, cliquez sur le menu **Outils** en haut à droite.
+   - Sélectionnez **DHCP** dans la liste déroulante. La console de gestion DHCP s'ouvre.
+2. **Création d'une Nouvelle Étendue :**
+   - Dans le volet de gauche, développez le nom de votre serveur (ex: `WINDOWS-AD.entreprise.local`).
+   - Faites un clic droit sur le nœud **IPv4** et sélectionnez **Nouvelle étendue...**.
+   - L'assistant de création s'ouvre. Cliquez sur **Suivant**.
+3. **Nommage de l'étendue :**
+   - Saisissez un nom explicite (ex: `LAN-Clients-Entreprise`) et une description facultative, puis cliquez sur **Suivant**.
+4. **Définition de la Plage d'Adresses :**
+   - Renseignez les bornes de la plage IP que le serveur distribuera automatiquement à vos machines clientes :
+     * **Adresse IP de début :** Saisissez la première IP de votre plage (ex: `192.168.10.50`).
+     * **Adresse IP de fin :** Saisissez la dernière IP de votre plage (ex: `192.168.10.200`).
+   - En bas, vérifiez ou ajustez la configuration du masque de sous-réseau :
+     * **Longueur :** `24`
+     * **Masque de sous-réseau :** `255.255.255.0`
+   - Cliquez sur **Suivant**.
+5. **Ajout d'exclusions (Optionnel) :**
+   - Si vous devez réserver des adresses spécifiques au sein de cette plage pour d'autres serveurs ou équipements fixes, saisissez-les ici. Sinon, laissez vide et cliquez sur **Suivant**.
+6. **Durée du Bail :**
+   - Laissez la valeur par défaut (généralement 8 jours) ou adaptez-la selon vos besoins, puis cliquez sur **Suivant**.
+7. **Configuration des Options DHCP (Crucial pour le Domaine) :**
+   - Sur la page vous demandant si vous souhaitez configurer les options DHCP maintenant, cochez **Oui, je veux configurer ces options maintenant** et cliquez sur **Suivant**.
+   - **Option 003 (Passerelle par défaut / Routeur) :** Saisissez l'adresse IP de votre routeur ou passerelle si vous en possédez une sur ce LAN (ex: `192.168.10.1`), cliquez sur **Ajouter**, puis sur **Suivant**. Si le LAN est purement isolé sans passerelle, cliquez directement sur **Suivant**.
+   - **Option 006 (Serveur DNS) :** L'assistant doit normalement avoir pré-rempli cette zone avec le nom de votre domaine racine et l'IP fixe de votre contrôleur de domaine (ex: `192.168.10.10`). Si ce n'est pas le cas, ajoutez manuellement l'IP fixe de votre serveur Windows AD. *C'est cette option qui permet aux clients de localiser l'Active Directory.* Cliquez sur **Suivant**.
+   - **Option 044 (Serveurs WINS) :** Laissez vide et cliquez sur **Suivant**.
+8. **Activation de l'Étendue :**
+   - Cochez **Oui, je veux activer cette étendue maintenant** et cliquez sur **Suivant**, puis sur **Terminer**.
+9. **Autorisation du serveur dans l'Active Directory :**
+   - Dans la console DHCP, si une icône rouge apparaît sur le nœud IPv4, faites un clic droit sur le nom de votre serveur dans le volet de gauche et sélectionnez **Autoriser** (Authorize). 
+   - Appuyez sur `F5` pour rafraîchir : les icônes doivent passer au vert, confirmant que le serveur distribue désormais les adresses IP sur votre LAN segment.
+
+---
+
+## Étape 7 : Vérification et Maintenance Post-Installation
 **📍 Position de l'utilisateur :** Écran de connexion et Gestionnaire de serveur.
 
 1. Lors de l'ouverture de session, le compte de connexion s'affiche désormais sous la forme `DOMAINE\Administrateur` (ex: `ENTREPRISE\Administrateur`), confirmant que la machine est devenue un contrôleur de domaine. Saisissez votre mot de passe pour ouvrir le bureau.
