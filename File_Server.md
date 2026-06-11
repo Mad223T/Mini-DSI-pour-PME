@@ -91,19 +91,22 @@ Le service Samba est configuré pour monter un partage masqué, accessible uniqu
 ---
 
 ## Étape 4 : Automatisation de la Création des Répertoires et Permissions POSIX
+
 **📍 Position de l'utilisateur :** Console en ligne de commande de la VM Ubuntu Server.
 
-Cette phase industrialise la mise en place des espaces de stockage des utilisateurs en appliquant le principe du moindre privilège (isolation étanche 0700).
+Cette phase industrialise la mise en place des espaces de stockage des utilisateurs en appliquant le principe du moindre privilège (isolation étanche `0700`). Pour garantir la compatibilité avec le sous-système d'authentification Winbind et éviter les anomalies de désynchronisation d'UID (notamment en cas de suppression et recréation de compte AD), les droits de propriété doivent être appliqués via la syntaxe de nom court.
 
-1. Exécutez la boucle Bash suivante en modifiant la liste des comptes par les identifiants fonctionnels et vérifiés de votre Active Directory :
-   
-  ```bash
-  for user in a.martin b.leclerc m.garnier; do
-      sudo mkdir -p /srv/samba/privateshares/$user
-      sudo chown "$user@entreprise.local":"Utilisateurs du domaine@entreprise.local" /srv/samba/privateshares/$user
-      sudo chmod 700 /srv/samba/privateshares/$user
-  done
-  ```
+1. Exécutez la boucle Bash suivante sur votre serveur de fichiers en adaptant la liste des comptes par les identifiants fonctionnels de votre Active Directory :
+
+```bash
+for user in prenom.nom1 prenom.nom2 prenom.nom3; do
+    sudo mkdir -p /srv/samba/privateshares/$user
+    sudo chown "$user:" /srv/samba/privateshares/$user
+    sudo chmod 700 /srv/samba/privateshares/$user
+done
+```
+
+Note: Le caractère `:` inséré juste après la variable `$user` indique à Linux d'assigner l'utilisateur AD comme propriétaire unique du dossier sans modifier ou interférer avec le groupe POSIX local.
 
 ---
 
@@ -119,6 +122,70 @@ En cas d'échec ou d'anomalie d'authentification sur un compte précis suite à 
    ```
 2. Réappliquez les droits de propriété exacts et les restrictions de sécurité de manière unitaire :
    ```bash
-   sudo chown "nom.utilisateur@entreprise.local":"Utilisateurs du domaine@entreprise.local" /srv/samba/privateshares/nom.utilisateur
+    sudo chown "nom.utilisateur:" /srv/samba/privateshares/nom.utilisateur
+   ```
+3. Rétablissez les restrictions d'accès strictes pour isoler l'espace privé:
+   ```bash
    sudo chmod 700 /srv/samba/privateshares/nom.utilisateur
    ```
+
+---
+
+## Étape 6 : Forçage et Alignement des Droits Collaboratifs (Espace Commun X:)
+
+**📍 Position de l'utilisateur :** Console en ligne de commande de la VM Ubuntu Server.
+
+Pour gérer un espace partagé commun destiné au travail collaboratif sans subir les blocages liés aux restrictions des ACLs POSIX classiques sur les groupes Active Directory (notamment ceux contenant des espaces), la gouvernance des droits d'écriture et de création est directement prise en charge et imposée par les directives du démon Samba.
+
+1. Ouvrez à nouveau le fichier de configuration principal de Samba :
+   ```bash
+   sudo nano /etc/samba/smb.conf
+   ```
+
+2. Tout en bas du fichier, ajoutez ou modifiez le bloc de déclaration de l'espace commun en y intégrant les masques de force applicatifs:
+   ```yaml
+   [PublicShares]
+       comment = Espace Collaboratif Commun
+       path = /srv/samba/publicshares/
+       browseable = yes
+       read only = no
+       guest ok = no
+       valid users = @"Utilisateurs du domaine@votre-domaine.local"
+       force create mode = 0660
+       force directory mode = 0770
+       directory mask = 0777
+   ```
+(Note : Les directives `force create mode` et `force directory mode` garantissent que n'importe quel fichier ou dossier créé par un collaborateur AD sera instantanément modifiable et navigable par l'ensemble des autres membres du groupe).
+
+3. Enregistrez et quittez l'éditeur (`Ctrl+O` puis `Entrée`, puis `Ctrl+X`).
+4. Redémarrer le service Samba pour appliquer la nouvelle politique de droits forcés:
+   ```bash
+   sudo systemctl restart smbd
+   ```
+
+---
+
+## Étape 7 : Automatisation et synchronisation avec le script global
+
+**📍 Position de l'utilisateur :** Console en ligne de commande de la VM Ubuntu Server.
+
+Pour éviter les interventions manuelles à chaque création d'utilisateur, le serveur de fichiers doit être capable de traiter les requêtes provenant du script PowerShell du contrôleur de domaine Windows Server via SSH. Cette étape assure que le dossier personnel est créé et correctement propriétaire dès qu'un nouvel utilisateur est provisionné dans l'Active Directory.
+
+1. Assurez-vous que le service SSH est actif sur votre serveur Ubuntu :
+   ```bash
+   sudo systemctl enable ssh
+   sudo systemctl start ssh
+   ```
+2. Le script PowerShell (détaillé dans la documentation du serveur Windows) effectue désormais automatiquement les deux actions suivantes à chaque exécution sur le serveur Ubuntu :
+
+La création du répertoire : sudo mkdir -p /srv/samba/privateshares/$samAccount
+
+L'alignement des permissions de propriété (via nom court) et des droits : sudo chown "$samAccount:" ... && sudo chmod 700 ...
+
+3. Si vous avez besoin de tester la réception d'une commande SSH depuis votre Windows Server vers Ubuntu manuellement pour vérifier la connectivité, exécutez depuis le terminal de votre serveur de fichiers :
+
+```Bash
+# Vérification que le système reconnaît bien l'utilisateur AD
+getent passwd | grep nom.utilisateur
+```
+4. Une fois cette étape intégrée, votre serveur Ubuntu devient "passif" : il n'y a plus de boucle Bash à lancer manuellement. Le serveur de fichiers Ubuntu réagit instantanément aux ordres envoyés par le script d'automatisation centralisé situé sur votre Windows Server.
