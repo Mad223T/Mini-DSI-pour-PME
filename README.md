@@ -76,7 +76,7 @@ Configuration :
 Nom du domaine :
 
 ```text
-ecoleit.com
+entreprise.com
 ```
 
 Promotion du serveur en contrôleur de domaine.
@@ -112,7 +112,7 @@ Exemple :
 ## Unités d'organisation (OU)
 
 ```text
-ecoleit.com
+entreprise.com
 │
 ├── Direction
 ├── Tech
@@ -211,7 +211,7 @@ Fonctions :
 Machine cliente intégrée au domaine :
 
 ```text
-ecoleit.com
+entreprise.com
 ```
 
 Tests réalisés :
